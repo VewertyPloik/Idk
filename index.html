@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Geometry Dash - Multiple Levels</title>
+<style>
+  body {
+    margin: 0; 
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    overflow: hidden;
+    user-select: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100vh;
+    background: #222;
+  }
+  h1 {
+    color: white;
+    margin: 20px 0 10px 0;
+    text-shadow: 1px 1px 4px #0008;
+  }
+  #level-select {
+    margin-bottom: 10px;
+    display: flex;
+    gap: 15px;
+  }
+  .level-button {
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-weight: bold;
+    font-size: 1.1rem;
+    cursor: pointer;
+    user-select: none;
+    color: white;
+    border: 2px solid transparent;
+    transition: background 0.3s, border-color 0.3s, color 0.3s;
+  }
+  .level-button.locked {
+    background: #444;
+    color: #888;
+    cursor: default;
+  }
+  .level-button.unlocked {
+    background: #555;
+    border-color: #999;
+  }
+  .level-button.selected {
+    border-color: #fff;
+    background: #777;
+  }
+  #game-container {
+    position: relative;
+    width: 600px;
+    height: 300px;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 0 30px #0009 inset;
+    background: #222;
+  }
+  #play-button {
+    margin-top: 15px;
+    padding: 10px 20px;
+    font-size: 1.2rem;
+    background: #4e54c8;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.3s ease;
+  }
+  #play-button:hover {
+    background: #3b3fc1;
+  }
+  canvas {
+    display: block;
+    border-radius: 12px;
+    background: linear-gradient(to bottom, #6dd5fa, #2980b9);
+  }
+  #progress {
+    color: white;
+    font-family: Consolas, monospace;
+    font-size: 18px;
+    margin: 8px 0 0 0;
+    text-shadow: 1px 1px 3px #0009;
+    user-select: none;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<h1>Geometry Dash - Levels</h1>
+<div id="level-select"></div>
+<div id="game-container">
+  <canvas id="game" width="600" height="300"></canvas>
+</div>
+<div id="progress">Progress: 0%</div>
+<button id="play-button" disabled>Play</button>
+
+<audio id="bg-music" loop>
+  <source src="https://cdn.pixabay.com/download/audio/2021/08/04/audio_4d9f4d61ec.mp3?filename=game-music-loop-6294.mp3" type="audio/mpeg">
+</audio>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const width = canvas.width;
+  const height = canvas.height;
+
+  const progressDisplay = document.getElementById('progress');
+  const bgMusic = document.getElementById('bg-music');
+  const levelSelectDiv = document.getElementById('level-select');
+  const playBtn = document.getElementById('play-button');
+
+  let gameRunning = false;
+  let gameOver = false;
+  let gameWin = false;
+  let startTime = 0;
+  const levelDuration = 30000; // 30 seconds
+
+  const player = {
+    x: 80,
+    y: height - 50,
+    width: 30,
+    height: 30,
+    color: '#ffd700',
+    vy: 0,
+    gravity: 0.8,
+    jumpPower: -14,
+    onGround: true,
+    baseY: height - 50,
+  };
+
+  const spikeWidth = 25;
+  const spikeHeight = 25;
+  let spikeSpeed = 6;
+
+  let spikes = [];
+
+  // Levels setup
+  const levels = [
+    {
+      id: 'numeroUno',
+      name: 'Numero Uno',
+      bgGradient: ['#6dd5fa', '#2980b9'], // blue
+      spikeJumps: [1, 2], // singles and doubles
+      unlocked: true,
+    },
+    {
+      id: 'dive',
+      name: 'Dive',
+      bgGradient: ['#56ab2f', '#a8e063'], // green
+      spikeJumps: [1, 2, 3], // singles, doubles, triples
+      unlocked: false,
+    },
+    {
+      id: 'blood',
+      name: 'Blood',
+      bgGradient: ['#cb2d3e', '#ef473a'], // red
+      spikeJumps: [1, 2, 3, 4], // singles to quadruple
+      unlocked: false,
+    },
+  ];
+
+  let currentLevelIndex = 0;
+
+  // Save unlocked levels in localStorage for persistence
+  function loadUnlocked() {
+    const saved = localStorage.getItem('gd_unlockedLevels');
+    if (saved) {
+      const savedUnlocked = JSON.parse(saved);
+      levels.forEach(level => {
+        level.unlocked = savedUnlocked.includes(level.id) || level.id === 'numeroUno';
+      });
+    }
+  }
+
+  function saveUnlocked() {
+    const unlockedIds = levels.filter(l => l.unlocked).map(l => l.id);
+    localStorage.setItem('gd_unlockedLevels', JSON.stringify(unlockedIds));
+  }
+
+  function createLevelButtons() {
+    levelSelectDiv.innerHTML = '';
+    levels.forEach((level, i) => {
+      const btn = document.createElement('button');
+      btn.textContent = level.name;
+      btn.classList.add('level-button');
+      btn.classList.add(level.unlocked ? 'unlocked' : 'locked');
+      btn.disabled = !level.unlocked;
+      if (i === currentLevelIndex) btn.classList.add('selected');
+
+      btn.addEventListener('click', () => {
+        if (!level.unlocked) return;
+        currentLevelIndex = i;
+        updateLevelButtons();
+        playBtn.disabled = false;
+      });
+      levelSelectDiv.appendChild(btn);
+    });
+  }
+
+  function updateLevelButtons() {
+    const buttons = levelSelectDiv.querySelectorAll('button');
+    buttons.forEach((btn, i) => {
+      btn.classList.toggle('selected', i === currentLevelIndex);
+    });
+  }
+
+  // Spike generation with different spike jump types (1 to 4 spikes)
+  function generateSpikesForLevel(level) {
+    spikes = [];
+    spikeSpeed = 6 + currentLevelIndex * 2; // increase speed each level a bit
+
+    let xPos = 600;
+    const totalDistance = 10800;
+
+    while (xPos < totalDistance) {
+      // Pick a random spike jump length from allowed jumps in this level
+      const jumpCount = level.spikeJumps[Math.floor(Math.random() * level.spikeJumps.length)];
+
+      // Create the spike group
+      for (let i = 0; i < jumpCount; i++) {
+        spikes.push({
+          x: xPos + i * (spikeWidth + 2),
+          y: height - spikeHeight,
+          width: spikeWidth,
+          height: spikeHeight,
+        });
+      }
+
+      // Add space after this spike group
+      xPos += jumpCount * (spikeWidth + 2) + 200 + Math.random() * 200;
+    }
+  }
+
+  function resetGame() {
+    gameOver = false;
+    gameWin = false;
+    startTime = performance.now();
+    player.y = player.baseY;
+    player.vy = 0;
+    player.onGround = true;
+
+    generateSpikesForLevel(levels[currentLevelIndex]);
+    progressDisplay.textContent = 'Progress: 0%';
+
+    bgMusic.pause();
+    bgMusic.currentTime = 0;
+    bgMusic.play().catch(() => {});
+
+    playBtn.disabled = true;
+  }
+
+  function drawSpike(x, y, w, h) {
+    ctx.fillStyle = '#ff3b3b';
+    ctx.beginPath();
+    ctx.moveTo(x, y + h);        // bottom left
+    ctx.lineTo(x + w / 2, y);    // top center (spike tip)
+    ctx.lineTo(x + w, y + h);    // bottom right
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function pointInTriangle(px, py, ax, ay, bx, by, cx, cy) {
+    const v0x = cx - ax;
+    const v0y = cy - ay;
+    const v1x = bx - ax;
+    const v1y = by - ay;
+    const v2x = px - ax;
+    const v2y = py - ay;
+
+    const dot00 = v0x * v0x + v0y * v0y;
+    const dot01 = v0x * v1x + v0y * v1y;
+    const dot02 = v0x * v2x + v0y * v2y;
+    const dot11 = v1x * v1x + v1y * v1y;
+    const dot12 = v1x * v2x + v1y * v2y;
+
+    const denom = dot00 * dot11 - dot01 * dot01;
+    if (denom === 0) return false;
+
+    const invDenom = 1 / denom;
+    const u = (dot11 * dot02 - dot01 * dot12) * invDenom;
+    const v = (dot00 * dot12 - dot01 * dot02) * invDenom;
+
+    return (u >= 0) && (v >= 0) && (u + v < 1);
+  }
+
+  function checkSpikeCollision(spike) {
+    const ax = spike.x;
+    const ay = spike.y + spike.height;
+    const bx = spike.x + spike.width / 2;
+    const by = spike.y;
+    const cx = spike.x + spike.width;
+    const cy = spike.y + spike.height;
+
+    const corners = [
+      { x: player.x, y: player.y },
+      { x: player.x + player.width, y: player.y },
+      { x: player.x, y: player.y + player.height },
+      { x: player.x + player.width, y: player.y + player.height }
+    ];
+
+    for (const corner of corners) {
+      if (pointInTriangle(corner.x, corner.y, ax, ay, bx, by, cx, cy)) {
+        return true;
+      }
+    }
+
+    // Also check spike tip inside player box
+    if (bx >= player.x && bx <= player.x + player.width &&
+        by >= player.y && by <= player.y + player.height) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function gameLoop(timestamp) {
+    if (!gameRunning) return;
+
+    ctx.clearRect(0, 0, width, height);
+
+    // Background gradient from current level
+    const bg = levels[currentLevelIndex].bgGradient;
+    const bgGradient = ctx.createLinearGradient(0, 0, 0, height);
+    bgGradient.addColorStop(0, bg[0]);
+    bgGradient.addColorStop(1, bg[1]);
+    ctx.fillStyle = bgGradient;
+    ctx.fillRect(0, 0, width, height);
+
+    // Ground
+    ctx.fillStyle = '#2c3e50';
+    ctx.fillRect(0, height - 40, width, 40);
+
+    // Player physics
+    player.vy += player.gravity;
+    player.y += player.vy;
+
+    if (player.y > player.baseY) {
+      player.y = player.baseY;
+      player.vy = 0;
+      player.onGround = true;
+    }
+
+    // Draw player
+    ctx.fillStyle = player.color;
+    ctx.fillRect(player.x, player.y, player.width, player.height);
+
+    // Move & draw spikes + collision
+    for (const spike of spikes) {
+      spike.x -= spikeSpeed;
+      drawSpike(spike.x, spike.y, spike.width, spike.height);
+
+      if (checkSpikeCollision(spike)) {
+        gameOver = true;
+      }
+    }
+
+    // Progress
+    const elapsed = timestamp - startTime;
+    const progressPercent = Math.min(100, (elapsed / levelDuration) * 100);
+    progressDisplay.textContent = `Progress: ${progressPercent.toFixed(1)}%`;
+
+    if (gameOver) {
+      bgMusic.pause();
+
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.fillStyle = 'white';
+      ctx.font = '36px Arial Black, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Game Over!', width / 2, height / 2 - 20);
+      ctx.font = '20px Arial';
+      ctx.fillText('Click Play to try again', width / 2, height / 2 + 20);
+
+      gameRunning = false;
+      playBtn.disabled = false;
+      return;
+    }
+
+    if (elapsed >= levelDuration) {
+      bgMusic.pause();
+
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.fillStyle = 'white';
+      ctx.font = '36px Arial Black, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Level Complete!', width / 2, height / 2 - 20);
+      ctx.font = '20px Arial';
+      ctx.fillText('Click Play to play again', width / 2, height / 2 + 20);
+
+      // Unlock next level if any
+      if (currentLevelIndex < levels.length - 1 && !levels[currentLevelIndex + 1].unlocked) {
+        levels[currentLevelIndex + 1].unlocked = true;
+        saveUnlocked();
+        createLevelButtons();
+      }
+
+      gameRunning = false;
+      playBtn.disabled = false;
+      return;
+    }
+
+    requestAnimationFrame(gameLoop);
+  }
+
+  function jump() {
+    if (!gameRunning) return;
+    if (player.onGround) {
+      player.vy = player.jumpPower;
+      player.onGround = false;
+    }
+  }
+
+  canvas.addEventListener('mousedown', jump);
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    jump();
+  }, {passive: false});
+
+  playBtn.addEventListener('click', () => {
+    resetGame();
+    gameRunning = true;
+    playBtn.disabled = true;
+    requestAnimationFrame(gameLoop);
+  });
+
+  // Load saved unlocked levels and create level buttons
+  loadUnlocked();
+  createLevelButtons();
+
+  // Select first unlocked level by default
+  let found = false;
+  for (let i = 0; i < levels.length; i++) {
+    if (levels[i].unlocked) {
+      currentLevelIndex = i;
+      playBtn.disabled = false;
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    currentLevelIndex = 0;
+    levels[0].unlocked = true;
+    playBtn.disabled = false;
+  }
+  updateLevelButtons();
+})();
+</script>
+
+</body>
+</html>
